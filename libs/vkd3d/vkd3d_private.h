@@ -197,6 +197,11 @@ struct vkd3d_instance
 extern uint64_t vkd3d_config_flags;
 extern struct vkd3d_shader_quirk_info vkd3d_shader_quirk_info;
 
+struct vkd3d_queue_timeline_trace_cookie
+{
+    unsigned int index;
+};
+
 struct vkd3d_waiting_fence
 {
     d3d12_fence_iface *fence;
@@ -204,6 +209,7 @@ struct vkd3d_waiting_fence
     uint64_t value;
     LONG **submission_counters;
     size_t num_submission_counts;
+    struct vkd3d_queue_timeline_trace_cookie timeline_cookie;
     bool signal;
 };
 
@@ -219,12 +225,23 @@ struct vkd3d_fence_worker
     size_t enqueued_fences_size;
 
     struct d3d12_device *device;
+    struct d3d12_command_queue *queue;
+
+    /* To aid timeline profiles. A single fence worker processes work monotonically. */
+    struct
+    {
+        char tid[64];
+        double lock_end_gpu_ts;
+        double lock_end_cpu_ts;
+        double lock_end_event_ts;
+        double lock_end_callback_ts;
+    } timeline;
 };
 
-HRESULT vkd3d_fence_worker_start(struct vkd3d_fence_worker *worker,
-        struct d3d12_device *device);
-HRESULT vkd3d_fence_worker_stop(struct vkd3d_fence_worker *worker,
-        struct d3d12_device *device);
+HRESULT vkd3d_enqueue_timeline_semaphore(struct vkd3d_fence_worker *worker,
+        d3d12_fence_iface *fence, VkSemaphore timeline, uint64_t value, bool signal,
+        LONG **submission_counters, size_t num_submission_counts,
+        const struct vkd3d_queue_timeline_trace_cookie *timeline_cookie);
 
 /* 2 MiB is a good threshold, because it's huge page size. */
 #define VKD3D_VA_BLOCK_SIZE_BITS (21)
@@ -494,6 +511,7 @@ struct vkd3d_waiting_event
     vkd3d_native_sync_handle handle;
     bool *latch;
     uint32_t *payload;
+    struct vkd3d_queue_timeline_trace_cookie timeline_cookie;
 };
 
 struct d3d12_fence
@@ -2801,6 +2819,8 @@ struct vkd3d_queue
 
     VkSemaphoreSubmitInfo *wait_semaphores;
     size_t wait_semaphores_size;
+    uint64_t *wait_values_virtual;
+    size_t wait_values_virtual_size;
     d3d12_fence_iface **wait_fences;
     size_t wait_fences_size;
     uint32_t wait_count;
@@ -2811,7 +2831,8 @@ HRESULT vkd3d_queue_create(struct d3d12_device *device, uint32_t family_index, u
         const VkQueueFamilyProperties *properties, struct vkd3d_queue **queue);
 void vkd3d_queue_destroy(struct vkd3d_queue *queue, struct d3d12_device *device);
 void vkd3d_queue_release(struct vkd3d_queue *queue);
-void vkd3d_queue_add_wait(struct vkd3d_queue *queue, d3d12_fence_iface *waiter, VkSemaphore semaphore, uint64_t value);
+void vkd3d_queue_add_wait(struct vkd3d_queue *queue, d3d12_fence_iface *waiter,
+        VkSemaphore semaphore, uint64_t value, uint64_t virtual_value);
 
 enum vkd3d_submission_type
 {
@@ -2873,6 +2894,8 @@ struct d3d12_command_queue_submission_execute
     unsigned int *breadcrumb_indices;
     size_t breadcrumb_indices_count;
 #endif
+
+    struct vkd3d_queue_timeline_trace_cookie timeline_cookie;
 
     bool debug_capture;
 };
@@ -2945,6 +2968,7 @@ struct d3d12_command_queue
     struct vkd3d_fence_worker fence_worker;
     struct vkd3d_private_store private_store;
     struct dxgi_vk_swap_chain_factory vk_swap_chain_factory;
+    unsigned int submission_thread_tid;
 };
 
 HRESULT d3d12_command_queue_create(struct d3d12_device *device,
@@ -4036,6 +4060,77 @@ struct d3d12_device_scratch_pool
     size_t scratch_buffer_count;
 };
 
+enum vkd3d_queue_timeline_trace_state_type
+{
+    VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_NONE = 0,
+    VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_EVENT,
+    VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_SUBMISSION,
+    VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_WAIT,
+    VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_SIGNAL,
+    VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_PRESENT,
+    VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_CALLBACK,
+};
+
+struct vkd3d_queue_timeline_trace_state
+{
+    enum vkd3d_queue_timeline_trace_state_type type;
+    char desc[128];
+    uint64_t start_ts;
+    uint64_t start_submit_ts;
+};
+
+struct vkd3d_queue_timeline_trace
+{
+    pthread_mutex_t lock;
+    FILE *file;
+    bool active;
+
+    unsigned int *vacant_indices;
+    size_t vacant_indices_count;
+    size_t vacant_indices_size;
+    struct vkd3d_queue_timeline_trace_state *state;
+    uint64_t base_ts;
+    uint64_t submit_count;
+};
+
+static inline bool vkd3d_queue_timeline_trace_cookie_is_valid(struct vkd3d_queue_timeline_trace_cookie cookie)
+{
+    return cookie.index != 0;
+}
+
+HRESULT vkd3d_queue_timeline_trace_init(struct vkd3d_queue_timeline_trace *trace);
+void vkd3d_queue_timeline_trace_cleanup(struct vkd3d_queue_timeline_trace *trace);
+struct vkd3d_queue_timeline_trace_cookie
+vkd3d_queue_timeline_trace_register_event_signal(struct vkd3d_queue_timeline_trace *trace,
+        vkd3d_native_sync_handle handle, d3d12_fence_iface *fence, uint64_t value);
+struct vkd3d_queue_timeline_trace_cookie
+vkd3d_queue_timeline_trace_register_signal(struct vkd3d_queue_timeline_trace *trace,
+        d3d12_fence_iface *fence, uint64_t value);
+struct vkd3d_queue_timeline_trace_cookie
+vkd3d_queue_timeline_trace_register_wait(struct vkd3d_queue_timeline_trace *trace,
+        d3d12_fence_iface *fence, uint64_t value);
+struct vkd3d_queue_timeline_trace_cookie
+vkd3d_queue_timeline_trace_register_swapchain_blit(struct vkd3d_queue_timeline_trace *trace,
+        uint64_t present_id);
+struct vkd3d_queue_timeline_trace_cookie
+vkd3d_queue_timeline_trace_register_present_wait(struct vkd3d_queue_timeline_trace *trace,
+        uint64_t present_id);
+struct vkd3d_queue_timeline_trace_cookie
+vkd3d_queue_timeline_trace_register_callback(struct vkd3d_queue_timeline_trace *trace);
+void vkd3d_queue_timeline_trace_complete_event_signal(struct vkd3d_queue_timeline_trace *trace,
+        struct vkd3d_fence_worker *worker,
+        struct vkd3d_queue_timeline_trace_cookie cookie);
+struct vkd3d_queue_timeline_trace_cookie
+vkd3d_queue_timeline_trace_register_execute(struct vkd3d_queue_timeline_trace *trace,
+        ID3D12CommandList * const *command_lists, unsigned int count);
+void vkd3d_queue_timeline_trace_complete_execute(struct vkd3d_queue_timeline_trace *trace,
+        struct vkd3d_fence_worker *worker,
+        struct vkd3d_queue_timeline_trace_cookie cookie);
+void vkd3d_queue_timeline_trace_complete_present_wait(struct vkd3d_queue_timeline_trace *trace,
+        struct vkd3d_queue_timeline_trace_cookie cookie);
+void vkd3d_queue_timeline_trace_begin_execute(struct vkd3d_queue_timeline_trace *trace,
+        struct vkd3d_queue_timeline_trace_cookie cookie);
+
 struct d3d12_device
 {
     d3d12_device_iface ID3D12Device_iface;
@@ -4092,6 +4187,7 @@ struct d3d12_device
     unsigned int format_compatibility_list_count;
     const struct vkd3d_format_compatibility_list *format_compatibility_lists;
     struct vkd3d_bindless_state bindless_state;
+    struct vkd3d_queue_timeline_trace queue_timeline_trace;
     struct vkd3d_memory_info memory_info;
     struct vkd3d_meta_ops meta_ops;
     struct vkd3d_view_map sampler_map;

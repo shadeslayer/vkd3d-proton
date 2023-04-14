@@ -1431,6 +1431,7 @@ static bool request_needs_swapchain_recreation(const struct dxgi_vk_swap_chain_p
 static void dxgi_vk_swap_chain_present_signal_blit_semaphore(struct dxgi_vk_swap_chain *chain)
 {
     const struct vkd3d_vk_device_procs *vk_procs = &chain->queue->device->vk_procs;
+    struct vkd3d_queue_timeline_trace_cookie cookie;
     VkSemaphoreSubmitInfo signal_semaphore_info;
     VkSubmitInfo2 submit_info;
     VkQueue vk_queue;
@@ -1452,6 +1453,16 @@ static void dxgi_vk_swap_chain_present_signal_blit_semaphore(struct dxgi_vk_swap
     vk_queue = vkd3d_queue_acquire(chain->queue->vkd3d_queue);
     vr = VK_CALL(vkQueueSubmit2(vk_queue, 1, &submit_info, VK_NULL_HANDLE));
     vkd3d_queue_release(chain->queue->vkd3d_queue);
+
+    /* Mark frame boundary. */
+    cookie = vkd3d_queue_timeline_trace_register_swapchain_blit(&chain->queue->device->queue_timeline_trace,
+            chain->present.present_id_valid ? chain->present.present_id : 0);
+
+    if (vkd3d_queue_timeline_trace_cookie_is_valid(cookie))
+    {
+        vkd3d_enqueue_timeline_semaphore(&chain->queue->fence_worker, NULL, chain->present.vk_blit_semaphore,
+                chain->present.blit_count, false, NULL, 0, &cookie);
+    }
 
     if (vr)
     {
@@ -1949,7 +1960,9 @@ static void *dxgi_vk_swap_chain_wait_worker(void *chain_)
 {
     struct dxgi_vk_swap_chain *chain = chain_;
 
+    struct vkd3d_queue_timeline_trace *timeline_trace = &chain->queue->device->queue_timeline_trace;
     const struct vkd3d_vk_device_procs *vk_procs = &chain->queue->device->vk_procs;
+    struct vkd3d_queue_timeline_trace_cookie cookie;
     uint64_t begin_frame_time_ns = 0;
     uint64_t end_frame_time_ns = 0;
     uint64_t next_wait_id = 0;
@@ -1970,9 +1983,13 @@ static void *dxgi_vk_swap_chain_wait_worker(void *chain_)
         if (!next_wait_id)
             break;
 
+        cookie = vkd3d_queue_timeline_trace_register_present_wait(timeline_trace, next_wait_id);
+
         /* We don't really care if we observed OUT_OF_DATE or something here. */
         VK_CALL(vkWaitForPresentKHR(chain->queue->device->vk_device, chain->present.vk_swapchain,
                 next_wait_id, UINT64_MAX));
+
+        vkd3d_queue_timeline_trace_complete_present_wait(timeline_trace, cookie);
 
         if (begin_frame_time_ns)
             end_frame_time_ns = vkd3d_get_current_time_ns();
