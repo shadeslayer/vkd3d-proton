@@ -1678,6 +1678,9 @@ static HRESULT d3d12_shared_fence_set_native_sync_handle_on_completion_explicit(
     }
     else
     {
+        event.timeline_cookie = vkd3d_queue_timeline_trace_register_event_signal(&fence->device->queue_timeline_trace,
+                handle, &fence->ID3D12Fence_iface, value);
+
         wait_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO;
         wait_info.pNext = NULL;
         wait_info.flags = 0;
@@ -1690,6 +1693,9 @@ static HRESULT d3d12_shared_fence_set_native_sync_handle_on_completion_explicit(
             ERR("Failed to wait on shared fence, vr %d.\n", vr);
             return E_FAIL;
         }
+
+        vkd3d_queue_timeline_trace_complete_event_signal(&fence->device->queue_timeline_trace,
+                NULL, event.timeline_cookie);
 
         return S_OK;
     }

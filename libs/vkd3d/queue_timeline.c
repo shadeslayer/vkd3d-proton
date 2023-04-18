@@ -175,6 +175,11 @@ void vkd3d_queue_timeline_trace_complete_event_signal(struct vkd3d_queue_timelin
         fprintf(trace->file, "{ \"name\": \"%s\", \"ph\": \"X\", \"tid\": \"event\", \"pid\": \"%u\", \"ts\": %f, \"dur\": %f },\n",
                 state->desc, pid, start_ts, end_ts - start_ts);
     }
+    else
+    {
+        fprintf(trace->file, "{ \"name\": \"%s\", \"ph\": \"X\", \"tid\": \"inline\", \"pid\": \"shared fence\", \"ts\": %f, \"dur\": %f },\n",
+                state->desc, start_ts, end_ts - start_ts);
+    }
 
     vkd3d_queue_timeline_trace_free_index(trace, cookie.index);
 }
