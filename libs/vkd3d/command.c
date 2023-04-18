@@ -713,6 +713,7 @@ static HRESULT vkd3d_fence_worker_stop(struct vkd3d_fence_worker *worker,
     pthread_cond_destroy(&worker->cond);
 
     vkd3d_free(worker->enqueued_fences);
+    vkd3d_free(worker->timeline.list_buffer);
     return S_OK;
 }
 
@@ -1938,6 +1939,7 @@ static HRESULT d3d12_command_allocator_allocate_command_buffer(struct d3d12_comm
 
     allocator->current_command_list = list;
     list->outstanding_submissions_count = &allocator->outstanding_submissions_count;
+    list->timeline_cookie = vkd3d_queue_timeline_trace_register_command_list(&allocator->device->queue_timeline_trace);
 
     return S_OK;
 }
@@ -4934,6 +4936,7 @@ static HRESULT STDMETHODCALLTYPE d3d12_command_list_Close(d3d12_command_list_ifa
     }
 
     list->is_recording = false;
+    vkd3d_queue_timeline_trace_close_command_list(&list->device->queue_timeline_trace, list->timeline_cookie);
 
     if (!list->is_valid)
     {

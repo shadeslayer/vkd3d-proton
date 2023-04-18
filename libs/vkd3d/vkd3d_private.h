@@ -235,6 +235,8 @@ struct vkd3d_fence_worker
         double lock_end_cpu_ts;
         double lock_end_event_ts;
         double lock_end_callback_ts;
+        unsigned int *list_buffer;
+        size_t list_buffer_size;
     } timeline;
 };
 
@@ -2713,6 +2715,7 @@ struct d3d12_command_list
 
     struct d3d12_transfer_batch_state transfer_batch;
     struct d3d12_wbi_batch_state wbi_batch;
+    struct vkd3d_queue_timeline_trace_cookie timeline_cookie;
 
     struct vkd3d_private_store private_store;
 
@@ -4069,25 +4072,35 @@ enum vkd3d_queue_timeline_trace_state_type
     VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_SIGNAL,
     VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_PRESENT,
     VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_CALLBACK,
+    VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_COMMAND_LIST,
 };
 
 struct vkd3d_queue_timeline_trace_state
 {
     enum vkd3d_queue_timeline_trace_state_type type;
-    char desc[128];
+    unsigned int tid;
     uint64_t start_ts;
     uint64_t start_submit_ts;
+    uint64_t record_end_ts;
+    uint64_t record_cookie;
+    char desc[128 - 5 * sizeof(uint64_t)];
 };
 
 struct vkd3d_queue_timeline_trace
 {
     pthread_mutex_t lock;
+    pthread_mutex_t ready_lock;
     FILE *file;
     bool active;
 
     unsigned int *vacant_indices;
     size_t vacant_indices_count;
     size_t vacant_indices_size;
+
+    unsigned int *ready_command_lists;
+    size_t ready_command_lists_count;
+    size_t ready_command_lists_size;
+
     struct vkd3d_queue_timeline_trace_state *state;
     uint64_t base_ts;
     uint64_t submit_count;
@@ -4117,16 +4130,21 @@ vkd3d_queue_timeline_trace_register_present_wait(struct vkd3d_queue_timeline_tra
         uint64_t present_id);
 struct vkd3d_queue_timeline_trace_cookie
 vkd3d_queue_timeline_trace_register_callback(struct vkd3d_queue_timeline_trace *trace);
-void vkd3d_queue_timeline_trace_complete_event_signal(struct vkd3d_queue_timeline_trace *trace,
-        struct vkd3d_fence_worker *worker,
-        struct vkd3d_queue_timeline_trace_cookie cookie);
 struct vkd3d_queue_timeline_trace_cookie
 vkd3d_queue_timeline_trace_register_execute(struct vkd3d_queue_timeline_trace *trace,
         ID3D12CommandList * const *command_lists, unsigned int count);
+struct vkd3d_queue_timeline_trace_cookie
+vkd3d_queue_timeline_trace_register_command_list(struct vkd3d_queue_timeline_trace *trace);
+
+void vkd3d_queue_timeline_trace_complete_event_signal(struct vkd3d_queue_timeline_trace *trace,
+        struct vkd3d_fence_worker *worker,
+        struct vkd3d_queue_timeline_trace_cookie cookie);
 void vkd3d_queue_timeline_trace_complete_execute(struct vkd3d_queue_timeline_trace *trace,
         struct vkd3d_fence_worker *worker,
         struct vkd3d_queue_timeline_trace_cookie cookie);
 void vkd3d_queue_timeline_trace_complete_present_wait(struct vkd3d_queue_timeline_trace *trace,
+        struct vkd3d_queue_timeline_trace_cookie cookie);
+void vkd3d_queue_timeline_trace_close_command_list(struct vkd3d_queue_timeline_trace *trace,
         struct vkd3d_queue_timeline_trace_cookie cookie);
 void vkd3d_queue_timeline_trace_begin_execute(struct vkd3d_queue_timeline_trace *trace,
         struct vkd3d_queue_timeline_trace_cookie cookie);

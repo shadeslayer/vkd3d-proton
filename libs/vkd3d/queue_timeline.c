@@ -42,17 +42,8 @@ HRESULT vkd3d_queue_timeline_trace_init(struct vkd3d_queue_timeline_trace *trace
     else
         return S_OK;
 
-    if (pthread_mutex_init(&trace->lock, NULL))
-    {
-        if (trace->file)
-        {
-            fclose(trace->file);
-            trace->file = NULL;
-        }
-        ERR("Failed to initialize mutex.\n");
-        /* Not fatal, just ignore. */
-        return S_OK;
-    }
+    pthread_mutex_init(&trace->lock, NULL);
+    pthread_mutex_init(&trace->ready_lock, NULL);
 
     vkd3d_array_reserve((void**)&trace->vacant_indices, &trace->vacant_indices_size,
             NUM_ENTRIES, sizeof(*trace->vacant_indices));
@@ -75,6 +66,24 @@ static void vkd3d_queue_timeline_trace_free_index(struct vkd3d_queue_timeline_tr
     pthread_mutex_lock(&trace->lock);
     assert(trace->vacant_indices_count < trace->vacant_indices_size);
     trace->vacant_indices[trace->vacant_indices_count++] = index;
+    pthread_mutex_unlock(&trace->lock);
+}
+
+static void vkd3d_queue_timeline_trace_free_indices(struct vkd3d_queue_timeline_trace *trace,
+        const unsigned int *indices, size_t count)
+{
+    size_t i;
+    pthread_mutex_lock(&trace->lock);
+
+    for (i = 0; i < count; i++)
+    {
+        assert(trace->state[indices[i]].type != VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_NONE);
+        trace->state[indices[i]].type = VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_NONE;
+    }
+
+    assert(trace->vacant_indices_count + count <= trace->vacant_indices_size);
+    memcpy(trace->vacant_indices + trace->vacant_indices_count, indices, count * sizeof(*indices));
+    trace->vacant_indices_count += count;
     pthread_mutex_unlock(&trace->lock);
 }
 
@@ -101,10 +110,12 @@ void vkd3d_queue_timeline_trace_cleanup(struct vkd3d_queue_timeline_trace *trace
         return;
 
     pthread_mutex_destroy(&trace->lock);
+    pthread_mutex_destroy(&trace->ready_lock);
     if (trace->file)
         fclose(trace->file);
 
     vkd3d_free(trace->vacant_indices);
+    vkd3d_free(trace->ready_command_lists);
     vkd3d_free(trace->state);
 }
 
@@ -290,11 +301,87 @@ vkd3d_queue_timeline_trace_register_callback(struct vkd3d_queue_timeline_trace *
 }
 
 struct vkd3d_queue_timeline_trace_cookie
+vkd3d_queue_timeline_trace_register_command_list(struct vkd3d_queue_timeline_trace *trace)
+{
+    struct vkd3d_queue_timeline_trace_cookie cookie = {0};
+    struct vkd3d_queue_timeline_trace_state *state;
+    uint64_t submission_count;
+    if (!trace->active)
+        return cookie;
+
+    cookie.index = vkd3d_queue_timeline_trace_allocate_index(trace, &submission_count);
+    if (!cookie.index)
+        return cookie;
+
+    state = &trace->state[cookie.index];
+    state->type = VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_COMMAND_LIST;
+    state->start_ts = vkd3d_get_current_time_ns();
+    state->record_cookie = submission_count;
+    return cookie;
+}
+
+void vkd3d_queue_timeline_trace_close_command_list(struct vkd3d_queue_timeline_trace *trace,
+        struct vkd3d_queue_timeline_trace_cookie cookie)
+{
+    struct vkd3d_queue_timeline_trace_state *state;
+    if (!trace->active || cookie.index == 0)
+        return;
+
+    state = &trace->state[cookie.index];
+    state->record_end_ts = vkd3d_get_current_time_ns();
+    state->tid = vkd3d_get_current_thread_id();
+
+    /* Defer actual IO until fence workers are doing something. */
+    pthread_mutex_lock(&trace->ready_lock);
+    vkd3d_array_reserve((void**)&trace->ready_command_lists, &trace->ready_command_lists_size,
+            trace->ready_command_lists_count + 1, sizeof(*trace->ready_command_lists));
+    trace->ready_command_lists[trace->ready_command_lists_count++] = cookie.index;
+    pthread_mutex_unlock(&trace->ready_lock);
+}
+
+struct vkd3d_queue_timeline_trace_cookie
 vkd3d_queue_timeline_trace_register_present_wait(struct vkd3d_queue_timeline_trace *trace, uint64_t present_id)
 {
     char str[128];
     snprintf(str, sizeof(str), "WAIT (id = %"PRIu64")", present_id);
     return vkd3d_queue_timeline_trace_register_generic_op(trace, VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_CALLBACK, str);
+}
+
+static void vkd3d_queue_timeline_trace_flush_command_recording(struct vkd3d_queue_timeline_trace *trace,
+        struct vkd3d_fence_worker *worker)
+{
+    const struct vkd3d_queue_timeline_trace_state *list_state;
+    size_t list_count;
+    size_t i;
+
+    pthread_mutex_lock(&trace->ready_lock);
+    if (trace->ready_command_lists_count)
+    {
+        /* Copy to local buffer to not stall recording threads while doing IO. */
+        vkd3d_array_reserve((void**)&worker->timeline.list_buffer,
+                &worker->timeline.list_buffer_size,
+                trace->ready_command_lists_count, sizeof(*worker->timeline.list_buffer));
+        memcpy(worker->timeline.list_buffer,
+                trace->ready_command_lists, trace->ready_command_lists_count * sizeof(*worker->timeline.list_buffer));
+        list_count = trace->ready_command_lists_count;
+        trace->ready_command_lists_count = 0;
+        pthread_mutex_unlock(&trace->ready_lock);
+
+        for (i = 0; i < list_count; i++)
+        {
+            list_state = &trace->state[worker->timeline.list_buffer[i]];
+            fprintf(trace->file, "{ \"name\": \"%"PRIu64"\", \"ph\": \"i\", \"tid\": %u, \"pid\": \"cmd reset\", \"ts\": %f, \"s\": \"t\" },\n",
+                    list_state->record_cookie, list_state->tid,
+                    (double)(list_state->start_ts - trace->base_ts) * 1e-3);
+            fprintf(trace->file, "{ \"name\": \"%"PRIu64"\", \"ph\": \"i\", \"tid\": %u, \"pid\": \"cmd close\", \"ts\": %f, \"s\": \"t\" },\n",
+                    list_state->record_cookie, list_state->tid,
+                    (double)(list_state->record_end_ts - trace->base_ts) * 1e-3);
+        }
+
+        vkd3d_queue_timeline_trace_free_indices(trace, worker->timeline.list_buffer, list_count);
+    }
+    else
+        pthread_mutex_unlock(&trace->ready_lock);
 }
 
 void vkd3d_queue_timeline_trace_complete_execute(struct vkd3d_queue_timeline_trace *trace,
@@ -317,6 +404,9 @@ void vkd3d_queue_timeline_trace_complete_execute(struct vkd3d_queue_timeline_tra
 
     if (worker)
     {
+        if (state->type == VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_SUBMISSION)
+            vkd3d_queue_timeline_trace_flush_command_recording(trace, worker);
+
         tid = worker->timeline.tid;
         pid = worker->queue->submission_thread_tid;
 
