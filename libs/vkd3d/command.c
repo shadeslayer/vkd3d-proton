@@ -2299,6 +2299,10 @@ static HRESULT STDMETHODCALLTYPE d3d12_command_allocator_Reset(ID3D12CommandAllo
     vk_procs = &device->vk_procs;
 
     d3d12_command_allocator_free_resources(allocator, true);
+
+    vkd3d_queue_timeline_trace_register_instantaneous(&device->queue_timeline_trace,
+            VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_COMMAND_ALLOCATOR_RESET, allocator->command_buffer_count);
+
     if (allocator->command_buffer_count)
     {
         VK_CALL(vkFreeCommandBuffers(device->vk_device, allocator->vk_command_pool,
@@ -2337,6 +2341,7 @@ static HRESULT STDMETHODCALLTYPE d3d12_command_allocator_Reset(ID3D12CommandAllo
 
     allocator->query_pool_count = 0;
     memset(&allocator->active_query_pools, 0, sizeof(allocator->active_query_pools));
+
     return S_OK;
 }
 

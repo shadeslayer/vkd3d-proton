@@ -4070,9 +4070,21 @@ enum vkd3d_queue_timeline_trace_state_type
     VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_SUBMISSION,
     VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_WAIT,
     VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_SIGNAL,
+
+    /* Blit task */
     VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_PRESENT,
+
+    /* Swapchain callback */
     VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_CALLBACK,
+
+    /* Reset() and Close() are useful instant events to see when command recording is happening and
+     * which threads do so. */
     VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_COMMAND_LIST,
+
+    /* Misc instantaneous events that are expected to be heavy. */
+    VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_COMMITTED_RESOURCE_ALLOCATION,
+    VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_HEAP_ALLOCATION,
+    VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_COMMAND_ALLOCATOR_RESET,
 };
 
 struct vkd3d_queue_timeline_trace_state
@@ -4135,6 +4147,9 @@ vkd3d_queue_timeline_trace_register_execute(struct vkd3d_queue_timeline_trace *t
         ID3D12CommandList * const *command_lists, unsigned int count);
 struct vkd3d_queue_timeline_trace_cookie
 vkd3d_queue_timeline_trace_register_command_list(struct vkd3d_queue_timeline_trace *trace);
+
+void vkd3d_queue_timeline_trace_register_instantaneous(struct vkd3d_queue_timeline_trace *trace,
+        enum vkd3d_queue_timeline_trace_state_type type, uint64_t value);
 
 void vkd3d_queue_timeline_trace_complete_event_signal(struct vkd3d_queue_timeline_trace *trace,
         struct vkd3d_fence_worker *worker,

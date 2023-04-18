@@ -344,6 +344,32 @@ void vkd3d_queue_timeline_trace_close_command_list(struct vkd3d_queue_timeline_t
     pthread_mutex_unlock(&trace->ready_lock);
 }
 
+void vkd3d_queue_timeline_trace_register_instantaneous(struct vkd3d_queue_timeline_trace *trace,
+        enum vkd3d_queue_timeline_trace_state_type type, uint64_t value)
+{
+    struct vkd3d_queue_timeline_trace_state *state;
+    unsigned int index;
+
+    if (!trace->active)
+        return;
+
+    index = vkd3d_queue_timeline_trace_allocate_index(trace, NULL);
+    if (!index)
+        return;
+
+    state = &trace->state[index];
+    state->type = type;
+    state->start_ts = vkd3d_get_current_time_ns();
+    state->record_cookie = value;
+
+    /* Defer actual IO until fence workers are doing something. */
+    pthread_mutex_lock(&trace->ready_lock);
+    vkd3d_array_reserve((void**)&trace->ready_command_lists, &trace->ready_command_lists_size,
+            trace->ready_command_lists_count + 1, sizeof(*trace->ready_command_lists));
+    trace->ready_command_lists[trace->ready_command_lists_count++] = index;
+    pthread_mutex_unlock(&trace->ready_lock);
+}
+
 struct vkd3d_queue_timeline_trace_cookie
 vkd3d_queue_timeline_trace_register_present_wait(struct vkd3d_queue_timeline_trace *trace, uint64_t present_id)
 {
@@ -352,7 +378,7 @@ vkd3d_queue_timeline_trace_register_present_wait(struct vkd3d_queue_timeline_tra
     return vkd3d_queue_timeline_trace_register_generic_op(trace, VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_CALLBACK, str);
 }
 
-static void vkd3d_queue_timeline_trace_flush_command_recording(struct vkd3d_queue_timeline_trace *trace,
+static void vkd3d_queue_timeline_trace_flush_instantaneous(struct vkd3d_queue_timeline_trace *trace,
         struct vkd3d_fence_worker *worker)
 {
     const struct vkd3d_queue_timeline_trace_state *list_state;
@@ -374,13 +400,45 @@ static void vkd3d_queue_timeline_trace_flush_command_recording(struct vkd3d_queu
 
         for (i = 0; i < list_count; i++)
         {
+            const char *generic_pid = NULL;
+            double start_ts;
             list_state = &trace->state[worker->timeline.list_buffer[i]];
-            fprintf(trace->file, "{ \"name\": \"%"PRIu64"\", \"ph\": \"i\", \"tid\": %u, \"pid\": \"cmd reset\", \"ts\": %f, \"s\": \"t\" },\n",
-                    list_state->record_cookie, list_state->tid,
-                    (double)(list_state->start_ts - trace->base_ts) * 1e-3);
-            fprintf(trace->file, "{ \"name\": \"%"PRIu64"\", \"ph\": \"i\", \"tid\": %u, \"pid\": \"cmd close\", \"ts\": %f, \"s\": \"t\" },\n",
-                    list_state->record_cookie, list_state->tid,
-                    (double)(list_state->record_end_ts - trace->base_ts) * 1e-3);
+            start_ts = (double)(list_state->start_ts - trace->base_ts) * 1e-3;
+
+            switch (list_state->type)
+            {
+                case VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_COMMAND_LIST:
+                    fprintf(trace->file,
+                            "{ \"name\": \"%"PRIu64"\", \"ph\": \"i\", \"tid\": %u, \"pid\": \"cmd reset\", \"ts\": %f, \"s\": \"t\" },\n",
+                            list_state->record_cookie, list_state->tid, start_ts);
+                    fprintf(trace->file,
+                            "{ \"name\": \"%"PRIu64"\", \"ph\": \"i\", \"tid\": %u, \"pid\": \"cmd close\", \"ts\": %f, \"s\": \"t\" },\n",
+                            list_state->record_cookie, list_state->tid,
+                            (double)(list_state->record_end_ts - trace->base_ts) * 1e-3);
+                    break;
+
+                case VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_HEAP_ALLOCATION:
+                    generic_pid = "heap allocate";
+                    break;
+
+                case VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_COMMAND_ALLOCATOR_RESET:
+                    generic_pid = "command allocator reset";
+                    break;
+
+                case VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_COMMITTED_RESOURCE_ALLOCATION:
+                    generic_pid = "committed resource alloc";
+                    break;
+
+                default:
+                    break;
+            }
+
+            if (generic_pid)
+            {
+                fprintf(trace->file,
+                        "{ \"name\": \"%"PRIu64"\", \"ph\": \"i\", \"tid\": %u, \"pid\": \"%s\", \"ts\": %f, \"s\": \"t\" },\n",
+                        list_state->record_cookie, list_state->tid, generic_pid, start_ts);
+            }
         }
 
         vkd3d_queue_timeline_trace_free_indices(trace, worker->timeline.list_buffer, list_count);
@@ -410,7 +468,7 @@ void vkd3d_queue_timeline_trace_complete_execute(struct vkd3d_queue_timeline_tra
     if (worker)
     {
         if (state->type == VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_SUBMISSION)
-            vkd3d_queue_timeline_trace_flush_command_recording(trace, worker);
+            vkd3d_queue_timeline_trace_flush_instantaneous(trace, worker);
 
         tid = worker->timeline.tid;
         pid = worker->queue->submission_thread_tid;
