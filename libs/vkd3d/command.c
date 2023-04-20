@@ -844,6 +844,8 @@ static HRESULT vkd3d_waiting_event_signal(struct d3d12_device *device, struct vk
     if (!do_signal)
         return S_FALSE;
 
+    vkd3d_queue_timeline_trace_complete_event_signal(&device->queue_timeline_trace, worker, event->timeline_cookie);
+
     if (!vkd3d_native_sync_handle_is_valid(event->handle))
     {
         *event->latch = true;
@@ -854,8 +856,6 @@ static HRESULT vkd3d_waiting_event_signal(struct d3d12_device *device, struct vk
 
     if (FAILED(hr))
         ERR("Failed to signal event, hr #%x.\n", hr);
-
-    vkd3d_queue_timeline_trace_complete_event_signal(&device->queue_timeline_trace, worker, event->timeline_cookie);
 
     return hr;
 }
