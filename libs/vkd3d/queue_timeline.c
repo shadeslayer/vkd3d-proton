@@ -23,7 +23,7 @@
 #include <assert.h>
 #include <stdio.h>
 
-#define NUM_ENTRIES (16 * 1024)
+#define NUM_ENTRIES (256 * 1024)
 
 HRESULT vkd3d_queue_timeline_trace_init(struct vkd3d_queue_timeline_trace *trace)
 {
