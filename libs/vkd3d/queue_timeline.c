@@ -187,7 +187,7 @@ void vkd3d_queue_timeline_trace_complete_event_signal(struct vkd3d_queue_timelin
             end_ts = start_ts;
         worker->timeline.lock_end_event_ts = end_ts;
 
-        fprintf(trace->file, "{ \"name\": \"%s\", \"ph\": \"X\", \"tid\": \"event\", \"pid\": \"%u\", \"ts\": %f, \"dur\": %f },\n",
+        fprintf(trace->file, "{ \"name\": \"%s\", \"ph\": \"X\", \"tid\": \"event\", \"pid\": \"0x%04x\", \"ts\": %f, \"dur\": %f },\n",
                 state->desc, pid, start_ts, end_ts - start_ts);
     }
     else
@@ -417,20 +417,24 @@ static void vkd3d_queue_timeline_trace_flush_instantaneous(struct vkd3d_queue_ti
         {
             const char *generic_pid = NULL;
             double start_ts;
+            double end_ts;
+
             list_state = &trace->state[worker->timeline.list_buffer[i]];
             start_ts = (double)(list_state->start_ts - trace->base_ts) * 1e-3;
 
             switch (list_state->type)
             {
                 case VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_COMMAND_LIST:
+                {
+                    end_ts = (double)(list_state->record_end_ts - trace->base_ts) * 1e-3;
                     fprintf(trace->file,
-                            "{ \"name\": \"%"PRIu64"\", \"ph\": \"i\", \"tid\": %u, \"pid\": \"cmd reset\", \"ts\": %f, \"s\": \"t\" },\n",
-                            list_state->record_cookie, list_state->tid, start_ts);
+                            "{ \"name\": \"%"PRIu64 " (delay %.3f us)\", \"ph\": \"i\", \"tid\": \"0x%04x\", \"pid\": \"cmd reset\", \"ts\": %f },\n",
+                            list_state->record_cookie, end_ts - start_ts, list_state->tid, start_ts);
                     fprintf(trace->file,
-                            "{ \"name\": \"%"PRIu64"\", \"ph\": \"i\", \"tid\": %u, \"pid\": \"cmd close\", \"ts\": %f, \"s\": \"t\" },\n",
-                            list_state->record_cookie, list_state->tid,
-                            (double)(list_state->record_end_ts - trace->base_ts) * 1e-3);
+                            "{ \"name\": \"%"PRIu64" (delay %.3f us)\", \"ph\": \"i\", \"tid\": \"0x%04x\", \"pid\": \"cmd close\", \"ts\": %f },\n",
+                            list_state->record_cookie, end_ts - start_ts, list_state->tid, end_ts);
                     break;
+                }
 
                 case VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_HEAP_ALLOCATION:
                     generic_pid = "heap allocate";
@@ -451,7 +455,7 @@ static void vkd3d_queue_timeline_trace_flush_instantaneous(struct vkd3d_queue_ti
             if (generic_pid)
             {
                 fprintf(trace->file,
-                        "{ \"name\": \"%"PRIu64"\", \"ph\": \"i\", \"tid\": %u, \"pid\": \"%s\", \"ts\": %f, \"s\": \"t\" },\n",
+                        "{ \"name\": \"%"PRIu64"\", \"ph\": \"i\", \"tid\": \"0x%04x\", \"pid\": \"%s\", \"ts\": %f },\n",
                         list_state->record_cookie, list_state->tid, generic_pid, start_ts);
             }
         }
@@ -490,7 +494,7 @@ void vkd3d_queue_timeline_trace_complete_execute(struct vkd3d_queue_timeline_tra
 
         if (state->type == VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_SUBMISSION)
         {
-            fprintf(trace->file, "{ \"name\": \"%s\", \"ph\": \"i\", \"tid\": \"cpu\", \"pid\": %u, \"ts\": %f, \"s\": \"t\" },\n",
+            fprintf(trace->file, "{ \"name\": \"%s\", \"ph\": \"i\", \"tid\": \"cpu\", \"pid\": \"0x%04x\", \"ts\": %f, \"s\": \"t\" },\n",
                     state->desc, pid, start_ts);
 
             if (start_ts < worker->timeline.lock_end_cpu_ts)
@@ -513,14 +517,14 @@ void vkd3d_queue_timeline_trace_complete_execute(struct vkd3d_queue_timeline_tra
             end_ts = start_submit_ts;
         *ts_lock = end_ts;
 
-        fprintf(trace->file, "{ \"name\": \"%s\", \"ph\": \"X\", \"tid\": \"%s\", \"pid\": %u, \"ts\": %f, \"dur\": %f },\n",
+        fprintf(trace->file, "{ \"name\": \"%s\", \"ph\": \"X\", \"tid\": \"%s\", \"pid\": \"0x%04x\", \"ts\": %f, \"dur\": %f },\n",
                 state->desc, tid, pid, start_submit_ts, end_ts - start_submit_ts);
 
         if (state->type == VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_SUBMISSION)
         {
             worker->timeline.lock_end_cpu_ts = start_submit_ts;
             fprintf(trace->file,
-                    "{ \"name\": \"%s\", \"ph\": \"X\", \"tid\": \"submit\", \"pid\": %u, \"ts\": %f, \"dur\": %f },\n",
+                    "{ \"name\": \"%s\", \"ph\": \"X\", \"tid\": \"submit\", \"pid\": \"0x%04x\", \"ts\": %f, \"dur\": %f },\n",
                     state->desc, pid, start_ts, start_submit_ts - start_ts);
         }
     }

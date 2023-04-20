@@ -600,7 +600,12 @@ static void *vkd3d_fence_worker_main(void *arg)
 
     vkd3d_set_thread_name("vkd3d_fence");
 
-    snprintf(worker->timeline.tid, sizeof(worker->timeline.tid), "family %u, tid %u, prio %d",
+    snprintf(worker->timeline.tid, sizeof(worker->timeline.tid),
+#ifdef _WIN32
+            "family %u, tid 0x%04x, prio %d",
+#else
+            "family %u, tid %u, prio %d",
+#endif
             worker->queue->vkd3d_queue->vk_family_index,
             vkd3d_get_current_thread_id(),
             worker->queue->desc.Priority);
