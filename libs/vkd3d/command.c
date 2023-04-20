@@ -14652,7 +14652,6 @@ static void *d3d12_command_queue_submission_worker_main(void *userdata)
 {
     struct d3d12_command_queue_submission submission;
     struct d3d12_command_queue_transition_pool pool;
-    struct vkd3d_queue_timeline_trace_cookie cookie;
     struct d3d12_command_queue *queue = userdata;
     VkSemaphoreSubmitInfo transition_semaphore;
     VkCommandBufferSubmitInfo transition_cmd;
@@ -14775,10 +14774,7 @@ static void *d3d12_command_queue_submission_worker_main(void *userdata)
         }
 
         case VKD3D_SUBMISSION_CALLBACK:
-            cookie = vkd3d_queue_timeline_trace_register_callback(&queue->device->queue_timeline_trace);
             submission.callback.callback(submission.callback.userdata);
-            vkd3d_queue_timeline_trace_complete_execute(&queue->device->queue_timeline_trace,
-                    &queue->fence_worker, cookie);
             break;
 
         default:

@@ -315,12 +315,6 @@ vkd3d_queue_timeline_trace_register_swapchain_blit(struct vkd3d_queue_timeline_t
 }
 
 struct vkd3d_queue_timeline_trace_cookie
-vkd3d_queue_timeline_trace_register_callback(struct vkd3d_queue_timeline_trace *trace)
-{
-    return vkd3d_queue_timeline_trace_register_generic_op(trace, VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_CALLBACK, "CALLBACK");
-}
-
-struct vkd3d_queue_timeline_trace_cookie
 vkd3d_queue_timeline_trace_register_command_list(struct vkd3d_queue_timeline_trace *trace)
 {
     struct vkd3d_queue_timeline_trace_cookie cookie = {0};
@@ -390,7 +384,7 @@ vkd3d_queue_timeline_trace_register_present_wait(struct vkd3d_queue_timeline_tra
 {
     char str[128];
     snprintf(str, sizeof(str), "WAIT (id = %"PRIu64")", present_id);
-    return vkd3d_queue_timeline_trace_register_generic_op(trace, VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_CALLBACK, str);
+    return vkd3d_queue_timeline_trace_register_generic_op(trace, VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_PRESENT_WAIT, str);
 }
 
 static void vkd3d_queue_timeline_trace_flush_instantaneous(struct vkd3d_queue_timeline_trace *trace,
@@ -435,6 +429,10 @@ static void vkd3d_queue_timeline_trace_flush_instantaneous(struct vkd3d_queue_ti
                             list_state->record_cookie, end_ts - start_ts, list_state->tid, end_ts);
                     break;
                 }
+
+                case VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_QUEUE_PRESENT:
+                    generic_pid = "queue present";
+                    break;
 
                 case VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_HEAP_ALLOCATION:
                     generic_pid = "heap allocate";
@@ -503,9 +501,9 @@ void vkd3d_queue_timeline_trace_complete_execute(struct vkd3d_queue_timeline_tra
                 start_submit_ts = start_ts;
         }
 
-        if (state->type == VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_CALLBACK)
+        if (state->type == VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_PRESENT_WAIT)
         {
-            ts_lock = &worker->timeline.lock_end_callback_ts;
+            ts_lock = &worker->timeline.lock_end_present_wait_ts;
             tid = "callback";
         }
         else

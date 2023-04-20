@@ -1832,6 +1832,10 @@ static void dxgi_vk_swap_chain_present_iteration(struct dxgi_vk_swap_chain *chai
     if (present_info.pNext && vr >= 0)
         chain->present.present_id_valid = true;
 
+    vkd3d_queue_timeline_trace_register_instantaneous(&chain->queue->device->queue_timeline_trace,
+            VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_QUEUE_PRESENT,
+            chain->present.present_id_valid ? chain->present.present_id : 0);
+
     /* Handle any errors and retry as needed. If we cannot make meaningful forward progress, just give up and retry later. */
     if (vr == VK_SUBOPTIMAL_KHR || vr < 0)
         chain->present.force_swapchain_recreation = true;
