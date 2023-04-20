@@ -4777,6 +4777,10 @@ ULONG STDMETHODCALLTYPE d3d12_command_list_Release(d3d12_command_list_iface *ifa
     return refcount;
 }
 
+#define VKD3D_QUEUE_TIMELINE2(l) \
+    vkd3d_queue_timeline_trace_register_instantaneous(&(l)->device->queue_timeline_trace, \
+        VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_ACTIVITY, (l)->timeline_cookie.index)
+
 static HRESULT STDMETHODCALLTYPE d3d12_command_list_GetPrivateData(d3d12_command_list_iface *iface,
         REFGUID guid, UINT *data_size, void *data)
 {
@@ -6548,6 +6552,7 @@ static void STDMETHODCALLTYPE d3d12_command_list_DrawInstanced(d3d12_command_lis
             "start_vertex_location %u, start_instance_location %u.\n",
             iface, vertex_count_per_instance, instance_count,
             start_vertex_location, start_instance_location);
+    //VKD3D_QUEUE_TIMELINE2(list);
 
     if (list->predicate_va)
     {
@@ -6619,6 +6624,7 @@ static void STDMETHODCALLTYPE d3d12_command_list_DrawIndexedInstanced(d3d12_comm
             "base_vertex_location %d, start_instance_location %u.\n",
             iface, index_count_per_instance, instance_count, start_vertex_location,
             base_vertex_location, start_instance_location);
+    //VKD3D_QUEUE_TIMELINE2(list);
 
     if (!d3d12_command_list_update_index_buffer(list))
         return;
@@ -6666,6 +6672,7 @@ static void STDMETHODCALLTYPE d3d12_command_list_Dispatch(d3d12_command_list_ifa
     struct vkd3d_scratch_allocation scratch;
 
     TRACE("iface %p, x %u, y %u, z %u.\n", iface, x, y, z);
+    VKD3D_QUEUE_TIMELINE2(list);
 
     if (list->predicate_va)
     {
@@ -10953,6 +10960,7 @@ static void STDMETHODCALLTYPE d3d12_command_list_BeginQuery(d3d12_command_list_i
     VkQueryControlFlags flags = d3d12_query_type_get_vk_flags(type);
 
     TRACE("iface %p, heap %p, type %#x, index %u.\n", iface, heap, type, index);
+    //VKD3D_QUEUE_TIMELINE2(list);
 
     if (!d3d12_query_type_is_scoped(type))
     {
@@ -10999,6 +11007,7 @@ static void STDMETHODCALLTYPE d3d12_command_list_EndQuery(d3d12_command_list_ifa
     const struct vkd3d_vk_device_procs *vk_procs = &list->device->vk_procs;
 
     TRACE("iface %p, heap %p, type %#x, index %u.\n", iface, heap, type, index);
+    //VKD3D_QUEUE_TIMELINE2(list);
 
     d3d12_command_list_track_query_heap(list, query_heap);
 

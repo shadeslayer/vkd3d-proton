@@ -331,6 +331,7 @@ vkd3d_queue_timeline_trace_register_command_list(struct vkd3d_queue_timeline_tra
     state->type = VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_COMMAND_LIST;
     state->start_ts = vkd3d_get_current_time_ns();
     state->record_cookie = submission_count;
+    state->counts = 0;
     return cookie;
 }
 
@@ -353,6 +354,9 @@ void vkd3d_queue_timeline_trace_close_command_list(struct vkd3d_queue_timeline_t
     pthread_mutex_unlock(&trace->ready_lock);
 }
 
+static _Thread_local bool vkd3d_has_thread_id;
+static _Thread_local unsigned int vkd3d_local_thread_id;
+
 void vkd3d_queue_timeline_trace_register_instantaneous(struct vkd3d_queue_timeline_trace *trace,
         enum vkd3d_queue_timeline_trace_state_type type, uint64_t value)
 {
@@ -362,6 +366,10 @@ void vkd3d_queue_timeline_trace_register_instantaneous(struct vkd3d_queue_timeli
     if (!trace->active)
         return;
 
+    if (type == VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_ACTIVITY)
+        if ((trace->state[value].counts++ % 64u) != 0)
+            return;
+
     index = vkd3d_queue_timeline_trace_allocate_index(trace, NULL);
     if (!index)
         return;
@@ -369,7 +377,21 @@ void vkd3d_queue_timeline_trace_register_instantaneous(struct vkd3d_queue_timeli
     state = &trace->state[index];
     state->type = type;
     state->start_ts = vkd3d_get_current_time_ns();
-    state->record_cookie = value;
+
+    if (vkd3d_has_thread_id)
+    {
+        state->tid = vkd3d_local_thread_id;
+    }
+    else
+    {
+        state->tid = vkd3d_local_thread_id = vkd3d_get_current_thread_id();
+        vkd3d_has_thread_id = true;
+    }
+
+    if (type == VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_ACTIVITY)
+        state->record_cookie = trace->state[value].record_cookie;
+    else
+        state->record_cookie = value;
 
     /* Defer actual IO until fence workers are doing something. */
     pthread_mutex_lock(&trace->ready_lock);
@@ -444,6 +466,10 @@ static void vkd3d_queue_timeline_trace_flush_instantaneous(struct vkd3d_queue_ti
 
                 case VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_COMMITTED_RESOURCE_ALLOCATION:
                     generic_pid = "committed resource alloc";
+                    break;
+
+                case VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_ACTIVITY:
+                    generic_pid = "activity";
                     break;
 
                 default:

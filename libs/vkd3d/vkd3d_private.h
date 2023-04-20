@@ -4086,6 +4086,7 @@ enum vkd3d_queue_timeline_trace_state_type
     VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_COMMITTED_RESOURCE_ALLOCATION,
     VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_HEAP_ALLOCATION,
     VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_COMMAND_ALLOCATOR_RESET,
+    VKD3D_QUEUE_TIMELINE_TRACE_STATE_TYPE_ACTIVITY,
 };
 
 struct vkd3d_queue_timeline_trace_state
@@ -4096,7 +4097,8 @@ struct vkd3d_queue_timeline_trace_state
     uint64_t start_submit_ts;
     uint64_t record_end_ts;
     uint64_t record_cookie;
-    char desc[128 - 5 * sizeof(uint64_t)];
+    unsigned counts;
+    char desc[128 - 5 * sizeof(uint64_t) - sizeof(uint32_t)];
 };
 
 struct vkd3d_queue_timeline_trace
