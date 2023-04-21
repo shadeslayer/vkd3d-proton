@@ -55,7 +55,6 @@ HRESULT vkd3d_queue_timeline_trace_init(struct vkd3d_queue_timeline_trace *trace
     trace->state = vkd3d_calloc(NUM_ENTRIES, sizeof(*trace->state));
     trace->base_ts = vkd3d_get_current_time_ns();
 
-#ifdef _WIN32
     if (vkd3d_get_env_var("VKD3D_QUEUE_PROFILE_ABSOLUTE", env, sizeof(env)) &&
             env[0] == '1')
     {
@@ -64,10 +63,9 @@ HRESULT vkd3d_queue_timeline_trace_init(struct vkd3d_queue_timeline_trace *trace
 
         /* Force an event at ts = 0 so the trace gets absolute time. */
         fprintf(trace->file,
-                "{ \"name\": \"dummy\", \"ph\": \"i\", \"tid\": \"0x%04x\", \"pid\": \"0x%04x\", \"ts\": 0.0 },\n",
-                vkd3d_get_current_thread_id(), (UINT)GetCurrentProcessId());
+                "{ \"name\": \"dummy\", \"ph\": \"i\", \"tid\": \"0x%04x\", \"pid\": 0, \"ts\": 0.0 },\n",
+                vkd3d_get_current_thread_id());
     }
-#endif
 
     trace->active = true;
     return S_OK;
