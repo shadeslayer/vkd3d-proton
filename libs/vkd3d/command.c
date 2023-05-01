@@ -11531,7 +11531,7 @@ static void d3d12_command_list_execute_indirect_state_template_graphics(
     current_pipeline = list->current_pipeline;
 
     memset(&patch_args, 0, sizeof(patch_args));
-    patch_args.debug_tag = 0; /* Modify to non-zero value as desired when debugging. */
+    patch_args.debug_tag = (vkd3d_config_flags & VKD3D_CONFIG_FLAG_BREADCRUMBS_TRACE_INDIRECT) ? 1 : 0;
 
     if (FAILED(hr = d3d12_command_signature_allocate_preprocess_memory_for_list(
             list, signature, current_pipeline,
