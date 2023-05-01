@@ -83,6 +83,9 @@ static const char *vkd3d_patch_command_token_str(enum vkd3d_patch_command_token 
         case VKD3D_PATCH_COMMAND_TOKEN_COPY_FIRST_VERTEX: return "First Vertex";
         case VKD3D_PATCH_COMMAND_TOKEN_COPY_FIRST_INSTANCE: return "First Instance";
         case VKD3D_PATCH_COMMAND_TOKEN_COPY_VERTEX_OFFSET: return "Vertex Offset";
+        case VKD3D_PATCH_COMMAND_TOKEN_COPY_DISPATCH_X: return "X";
+        case VKD3D_PATCH_COMMAND_TOKEN_COPY_DISPATCH_Y: return "Y";
+        case VKD3D_PATCH_COMMAND_TOKEN_COPY_DISPATCH_Z: return "Z";
         default: return "???";
     }
 }
@@ -102,6 +105,29 @@ static bool vkd3d_patch_command_token_is_hex(enum vkd3d_patch_command_token toke
         default:
             return false;
     }
+}
+
+static const char *vkd3d_debug_tag_to_str(uint32_t value)
+{
+    switch (value)
+    {
+        case D3D12_INDIRECT_ARGUMENT_TYPE_DRAW:
+            return "Draw";
+        case D3D12_INDIRECT_ARGUMENT_TYPE_DRAW_INDEXED:
+            return "DrawIndexed";
+        case D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH:
+            return "Dispatch";
+        case D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_MESH:
+            return "Mesh";
+        case D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_RAYS:
+            return "RayGen";
+        case UINT32_MAX:
+            return "Template";
+        default:
+            break;
+    }
+
+    return "???";
 }
 
 static bool vkd3d_shader_debug_ring_print_message(struct vkd3d_shader_debug_ring *ring,
@@ -133,8 +159,8 @@ static bool vkd3d_shader_debug_ring_print_message(struct vkd3d_shader_debug_ring
          * Make sure the log is sortable for easier debug.
          * TODO: Might consider a callback system that listeners from different subsystems can listen to and print their own messages,
          * but that is overengineering at this time ... */
-        snprintf(message_buffer, sizeof(message_buffer), "ExecuteIndirect: GlobalCommandIndex %010u, Debug tag %010u, DrawID %04u (ThreadID %04u): ",
-                debug_instance, debug_thread_id[0], debug_thread_id[1], debug_thread_id[2]);
+        snprintf(message_buffer, sizeof(message_buffer), "ExecuteIndirect: GlobalCommandIndex %010u, %s, DrawID %04u (ThreadID %04u): ",
+                debug_instance, vkd3d_debug_tag_to_str(debug_thread_id[0]), debug_thread_id[1], debug_thread_id[2]);
 
         if (message_word_count == 2)
         {
@@ -146,11 +172,62 @@ static bool vkd3d_shader_debug_ring_print_message(struct vkd3d_shader_debug_ring
         }
         else if (message_word_count == 3)
         {
-            uint32_t value;
+            static const enum vkd3d_patch_command_token draw_types[] =
+            {
+                VKD3D_PATCH_COMMAND_TOKEN_COPY_VERTEX_COUNT,
+                VKD3D_PATCH_COMMAND_TOKEN_COPY_INSTANCE_COUNT,
+                VKD3D_PATCH_COMMAND_TOKEN_COPY_FIRST_VERTEX,
+                VKD3D_PATCH_COMMAND_TOKEN_COPY_FIRST_INSTANCE,
+            };
+
+            static const enum vkd3d_patch_command_token draw_indexed_types[] =
+            {
+                VKD3D_PATCH_COMMAND_TOKEN_COPY_INDEX_COUNT,
+                VKD3D_PATCH_COMMAND_TOKEN_COPY_INSTANCE_COUNT,
+                VKD3D_PATCH_COMMAND_TOKEN_COPY_FIRST_INDEX,
+                VKD3D_PATCH_COMMAND_TOKEN_COPY_VERTEX_OFFSET,
+                VKD3D_PATCH_COMMAND_TOKEN_COPY_FIRST_INSTANCE,
+            };
+
+            static const enum vkd3d_patch_command_token dispatch_types[] =
+            {
+                VKD3D_PATCH_COMMAND_TOKEN_COPY_DISPATCH_X,
+                VKD3D_PATCH_COMMAND_TOKEN_COPY_DISPATCH_Y,
+                VKD3D_PATCH_COMMAND_TOKEN_COPY_DISPATCH_Z,
+            };
+
+            const char *tag_str = "?";
+            uint32_t value, index;
+
             len = strlen(message_buffer);
             avail = sizeof(message_buffer) - len;
+            /* word 0 is a dummy value. */
+            index = READ_RING_WORD(word_offset + 1);
             value = READ_RING_WORD(word_offset + 2);
-            snprintf(message_buffer + len, avail, "%u", value);
+
+            switch (debug_thread_id[0])
+            {
+                case D3D12_INDIRECT_ARGUMENT_TYPE_DRAW:
+                    if (index < ARRAY_SIZE(draw_types))
+                        tag_str = vkd3d_patch_command_token_str(draw_types[index]);
+                    break;
+
+                case D3D12_INDIRECT_ARGUMENT_TYPE_DRAW_INDEXED:
+                    if (index < ARRAY_SIZE(draw_indexed_types))
+                        tag_str = vkd3d_patch_command_token_str(draw_indexed_types[index]);
+                    break;
+
+                case D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH:
+                case D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_MESH:
+                    if (index < ARRAY_SIZE(dispatch_types))
+                        tag_str = vkd3d_patch_command_token_str(dispatch_types[index]);
+                    break;
+
+                default:
+                    break;
+            }
+
+            snprintf(message_buffer + len, avail, "%s <- %u", tag_str, value);
         }
         else if (message_word_count == 4)
         {
