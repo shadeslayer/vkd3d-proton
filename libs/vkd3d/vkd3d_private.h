@@ -3198,6 +3198,7 @@ struct vkd3d_breadcrumb_tracer
     size_t trace_context_index;
 
     pthread_mutex_t lock;
+    bool reported_fault;
 };
 
 HRESULT vkd3d_breadcrumb_tracer_init(struct vkd3d_breadcrumb_tracer *tracer, struct d3d12_device *device);
