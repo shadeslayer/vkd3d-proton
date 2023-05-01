@@ -1499,6 +1499,7 @@ void vkd3d_execute_indirect_ops_cleanup(struct vkd3d_execute_indirect_ops *meta_
     VK_CALL(vkDestroyPipelineLayout(device->vk_device, meta_indirect_ops->vk_pipeline_layout_patch, NULL));
     VK_CALL(vkDestroyPipelineLayout(device->vk_device, meta_indirect_ops->vk_pipeline_layout_debug_ring, NULL));
     pthread_mutex_destroy(&meta_indirect_ops->mutex);
+    vkd3d_free(meta_indirect_ops->pipelines);
 }
 
 HRESULT vkd3d_meta_ops_init(struct vkd3d_meta_ops *meta_ops, struct d3d12_device *device)
