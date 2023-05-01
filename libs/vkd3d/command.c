@@ -6366,8 +6366,8 @@ static void d3d12_command_list_emit_execute_indirect_debug_ring(struct d3d12_com
     vk_barrier.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT;
 
     /* Allow correlation against breadcrumb log. */
+    VKD3D_BREADCRUMB_TAG("Implicit instance (plain)");
     VKD3D_BREADCRUMB_AUX32(args.implicit_instance);
-    VKD3D_BREADCRUMB_TAG("Implicit instance");
 
     if (!list->execute_indirect.has_observed_transition_to_indirect)
     {
@@ -11679,8 +11679,8 @@ static void d3d12_command_list_execute_indirect_state_template_graphics(
                     &vkd3d_implicit_instance_count, vkd3d_memory_order_relaxed) - 1;
 
             /* Allow correlation against breadcrumb log. */
+            VKD3D_BREADCRUMB_TAG("Implicit instance (template)");
             VKD3D_BREADCRUMB_AUX32(patch_args.implicit_instance);
-            VKD3D_BREADCRUMB_TAG("Implicit instance");
         }
 
         memset(&dep_info, 0, sizeof(dep_info));
