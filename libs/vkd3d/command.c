@@ -6419,6 +6419,7 @@ static bool d3d12_command_list_emit_multi_dispatch_indirect_count_state(struct d
     struct vkd3d_multi_dispatch_indirect_info pipeline_info;
     struct vkd3d_multi_dispatch_indirect_state_args args;
     struct vkd3d_scratch_allocation template_scratch;
+    static uint32_t vkd3d_implicit_instance_count;
     VkCommandBuffer vk_patch_cmd_buffer;
     VkMemoryBarrier2 vk_barrier;
     VkDependencyInfo dep_info;
@@ -6457,6 +6458,13 @@ static bool d3d12_command_list_emit_multi_dispatch_indirect_count_state(struct d
     args.root_parameter_template_va = template_scratch.va;
     args.stride_words = stride / sizeof(uint32_t);
     args.dispatch_offset_words = signature->state_template.compute.dispatch_offset_words;
+    args.debug_tag = UINT32_MAX;
+    args.implicit_instance = vkd3d_atomic_uint32_increment(
+            &vkd3d_implicit_instance_count, vkd3d_memory_order_relaxed) - 1;
+
+    /* Allow correlation against breadcrumb log. */
+    VKD3D_BREADCRUMB_TAG("Implicit instance (compute template)");
+    VKD3D_BREADCRUMB_AUX32(args.implicit_instance);
 
     memset(&dep_info, 0, sizeof(dep_info));
     dep_info.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
